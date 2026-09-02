@@ -1,0 +1,7 @@
+cells/
+nwb_tmp/
+logs/
+metadata.csv
+*.h5
+*.tmp
+.DS_Store
