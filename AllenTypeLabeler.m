@@ -47,8 +47,8 @@ root.ColumnSpacing = 0;
 % --- toolbar (spans both columns) ---
 tbPanel = uipanel(root);
 tbPanel.Layout.Row = 1; tbPanel.Layout.Column = [1 2];
-tb = uigridlayout(tbPanel, [1 9]);
-tb.ColumnWidth = {60, 60, 130, '1x', 110, 130, 120, 130, 70};
+tb = uigridlayout(tbPanel, [1 10]);
+tb.ColumnWidth = {60, 60, 130, '1x', 110, 110, 140, 120, 130, 70};
 tb.Padding = [8 4 8 4]; tb.ColumnSpacing = 8;
 
 prevBtn = uibutton(tb, "Text", "◀ Prev", "ButtonPushedFcn", @(~,~) step(-1));
@@ -59,6 +59,8 @@ progLbl = uilabel(tb, "Text", "", "HorizontalAlignment", "center");
 speciesSW = uiswitch(tb, "slider", "Items", ["Mouse", "Human"], ...
     "Value", "Mouse", "ValueChangedFcn", @(~,~) applyFilters(false));
 statusDD = uidropdown(tb, "Items", ["All cells", "Unlabeled", "Labeled"], ...
+    "ValueChangedFcn", @(~,~) applyFilters(true));
+typeDD = uidropdown(tb, "Items", "All my types", ...
     "ValueChangedFcn", @(~,~) applyFilters(true));
 autoAdvCB = uicheckbox(tb, "Text", "Auto-advance", "Value", true);
 allenCB = uicheckbox(tb, "Text", "Show Allen types", "Value", false, ...
@@ -112,6 +114,7 @@ savedLbl.Layout.Row = 2; savedLbl.Layout.Column = [1 5];
 fig.WindowKeyPressFcn = @(~,evt) onKey(evt);
 
 refreshLabelControls();
+refreshTypeFilter();
 applyFilters(false);
 % start at the first unlabeled downloaded cell
 p = find(arrayfun(@(r) hasFile(r) && getLabel(r) == "", filtRows), 1);
@@ -253,12 +256,14 @@ app.fig = fig;
     function applyFilters(keepCell)
         prevRow = 0;
         if keepCell && ~isempty(filtRows), prevRow = filtRows(curPos); end
-        st = statusDD.Value;
+        st = statusDD.Value; ty = string(typeDD.Value);
         if speciesSW.Value == "Mouse", spName = "Mus musculus"; else, spName = "Homo Sapiens"; end
         keep = meta.("donor__species") == spName;
-        if st ~= "All cells"
+        if st ~= "All cells" || ty ~= "All my types"
             lab = arrayfun(@getLabel, (1:nCells)');
-            if st == "Unlabeled", keep = keep & lab == ""; else, keep = keep & lab ~= ""; end
+            if st == "Unlabeled", keep = keep & lab == ""; end
+            if st == "Labeled",   keep = keep & lab ~= ""; end
+            if ty ~= "All my types", keep = keep & lab == ty; end
         end
         filtRows = find(keep);
         if isempty(filtRows)
@@ -267,7 +272,7 @@ app.fig = fig;
         end
         rebuildListItems();
         p = find(filtRows == prevRow, 1);
-        if isempty(p), p = 1; end
+        if isempty(p), p = min(max(curPos, 1), numel(filtRows)); end
         selectByPos(p);
     end
 
@@ -465,12 +470,32 @@ app.fig = fig;
             refreshLabelControls();
         end
         saveLabels();
-        refreshListItem(curPos);
+        refreshTypeFilter();
+        if statusDD.Value ~= "All cells" || string(typeDD.Value) ~= "All my types"
+            applyFilters(true);   % membership in the filtered list may have changed
+        else
+            refreshListItem(curPos);
+            labelDD.Value = char(lbl);
+        end
         updateProgress();
-        labelDD.Value = char(lbl);
         try, focus(fig); catch, end %#ok<TRYNC>
         if autoAdvCB.Value && lbl ~= ""
             gotoNextUnlabeled();
+        end
+    end
+
+    function refreshTypeFilter()
+        inUse = strings(0, 1);
+        ids = labels.keys;
+        for i = 1:numel(ids)
+            L = labels{ids(i)}.label;
+            if L ~= "", inUse(end+1, 1) = L; end %#ok<AGROW>
+        end
+        items = ["All my types"; sort(unique(inUse))];
+        prev = string(typeDD.Value);
+        typeDD.Items = items;
+        if any(items == prev), typeDD.Value = prev;
+        else, typeDD.Value = "All my types";
         end
     end
 
