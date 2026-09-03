@@ -96,22 +96,27 @@ axFI = uiaxes(main);
 axFI.XLabel.String = "Current (pA)"; axFI.YLabel.String = "Spikes";
 
 lblPanel = uipanel(main, "Title", "Label");
-lp = uigridlayout(lblPanel, [2 6]);
-lp.ColumnWidth = {60, 220, 55, '1x', 70, 200};
+lp = uigridlayout(lblPanel, [2 7]);
+lp.ColumnWidth = {60, 150, 110, 55, '1x', 70, 200};
 lp.RowHeight = {'fit', 'fit'};
 lp.Padding = [8 6 8 6]; lp.RowSpacing = 4;
 
+% type entry is a TRUE edit field (reliably captures keystrokes) plus a
+% separate NON-editable dropdown for picking existing types — the editable
+% combobox leaked unconsumed keys to the figure while typing
 uilabel(lp, "Text", "Type:", "HorizontalAlignment", "right");
-labelDD = uidropdown(lp, "Editable", "on", "Value", "", ...
+labelEF = uieditfield(lp, "text", ...
     "ValueChangedFcn", @(s,~) commitLabel(strtrim(string(s.Value))));
+labelDD = uidropdown(lp, "Items", {''}, ...
+    "ValueChangedFcn", @(s,~) onPresetPick(s));
 uilabel(lp, "Text", "Notes:", "HorizontalAlignment", "right");
 notesEF = uieditfield(lp, "text", "ValueChangedFcn", @(s,~) commitNotes(string(s.Value)));
 clearBtn = uibutton(lp, "Text", "Clear (0)", "ButtonPushedFcn", @(~,~) commitLabel("")); %#ok<NASGU>
 hotkeyLbl = uilabel(lp, "Text", "", "WordWrap", "on", "FontSize", 11);
-hotkeyLbl.Layout.Row = [1 2]; hotkeyLbl.Layout.Column = 6;
+hotkeyLbl.Layout.Row = [1 2]; hotkeyLbl.Layout.Column = 7;
 savedLbl = uilabel(lp, "Text", "labels.csv: " + string(nnz_labels()) + " cells", ...
     "FontSize", 11, "FontColor", [.4 .4 .4]);
-savedLbl.Layout.Row = 2; savedLbl.Layout.Column = [1 5];
+savedLbl.Layout.Row = 2; savedLbl.Layout.Column = [1 6];
 
 % KeyPressFcn (not WindowKeyPressFcn): fires only when the figure itself has
 % keyboard focus, so hotkeys stay dead while typing in the Type/Notes boxes.
@@ -360,7 +365,7 @@ app.fig = fig;
         scroll(cellList, p);
         row = filtRows(p);
         showMetadata(row);
-        labelDD.Value = char(getLabel(row));
+        setLabelControls(getLabel(row));
         notesEF.Value = char(getNotes(row));
         plotCell(row);
         updateProgress();
@@ -489,7 +494,7 @@ app.fig = fig;
             applyFilters(true);   % membership in the filtered list may have changed
         else
             refreshListItem(curPos);
-            labelDD.Value = char(lbl);
+            setLabelControls(lbl);
         end
         updateProgress();
         try, focus(fig); catch, end %#ok<TRYNC>
@@ -536,6 +541,20 @@ app.fig = fig;
         labels(k) = {e};
         saveLabels();
         try, focus(fig); catch, end %#ok<TRYNC>
+    end
+
+    function onPresetPick(src)
+        v = strtrim(string(src.Value));
+        if v ~= "", commitLabel(v); end
+    end
+
+    function setLabelControls(lbl)
+        labelEF.Value = char(lbl);
+        if any(string(labelDD.Items) == lbl)
+            labelDD.Value = char(lbl);
+        else
+            labelDD.Value = '';
+        end
     end
 
     function refreshLabelControls()

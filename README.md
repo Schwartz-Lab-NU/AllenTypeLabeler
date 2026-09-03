@@ -43,8 +43,10 @@ AllenTypeLabeler            % or AllenTypeLabeler(rootDir)
 
 The "Next unlabeled" toolbar button jumps to the next cell without a label.
 
-Type any new label in the Type box + Enter — it is saved, added to
-`label_presets.txt`, and gains the next free hotkey. The Mouse/Human switch
+Type any new label in the Type box + Enter — it is saved and gains the next
+free hotkey. The dropdown next to it picks from existing types (useful once
+you have more than 9); both dropdowns and the hotkey list show only types
+currently assigned to at least one cell. The Mouse/Human switch
 picks the dataset; Rescan picks up cells while the download is still running.
 
 **Autosave:** every label/notes change immediately rewrites `labels.csv`
