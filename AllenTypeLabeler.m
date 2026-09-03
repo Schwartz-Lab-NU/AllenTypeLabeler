@@ -97,7 +97,7 @@ axFI.XLabel.String = "Current (pA)"; axFI.YLabel.String = "Spikes";
 
 lblPanel = uipanel(main, "Title", "Label");
 lp = uigridlayout(lblPanel, [2 7]);
-lp.ColumnWidth = {60, 150, 110, 55, '1x', 70, 200};
+lp.ColumnWidth = {60, 220, 240, 55, '1x', 70, 200};
 lp.RowHeight = {'fit', 'fit'};
 lp.Padding = [8 6 8 6]; lp.RowSpacing = 4;
 
