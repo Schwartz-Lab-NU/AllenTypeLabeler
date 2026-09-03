@@ -43,6 +43,13 @@ AllenTypeLabeler            % or AllenTypeLabeler(rootDir)
 
 The "Next unlabeled" toolbar button jumps to the next cell without a label.
 
+**Type examples panel** — the "Examples" toolbar toggle opens a collapsible
+right-hand panel with one card per established type (hotkey order): example
+traces from cells you already labeled with that type (hyperpolarizing,
+near-rheobase, and max sweeps, min/max-decimated so spikes survive), ◀ ▶ to
+cycle through that type's cells, and an "Assign to this type" button that
+labels the currently selected cell.
+
 Type in the Type box + Enter to label. While you type, the dropdown next to
 it live-selects the established type your text resolves to (exact match in
 any casing, else a unique prefix, else a unique substring) and Enter commits

@@ -33,22 +33,26 @@ allenT  = loadAllenTypes();  % dictionary: id string -> struct(e,m,me) [Gouwens 
 hasFile = scanCells();       % logical (nCells,1)
 filtRows = (1:nCells)';      % meta rows passing filters, list order
 curPos   = 1;                % position within filtRows
+rowOfId  = dictionary(string(meta.("specimen__id")), (1:nCells)');
+examplesOn = false;          % right-hand type-examples panel expanded?
+exState  = struct('name',{},'idx',{},'ax',{},'head',{},'pos',{});
+exCache  = dictionary(string.empty, cell.empty);  % id -> decimated example traces
 
 % ---------------- UI ----------------
 fig = uifigure("Name", "Allen Cell Types Labeler — WASSUP", ...
     "Position", [60 60 1400 850]);
-root = uigridlayout(fig, [2 2]);
+root = uigridlayout(fig, [2 3]);
 root.RowHeight     = {38, '1x'};
-root.ColumnWidth   = {300, '1x'};
+root.ColumnWidth   = {300, '1x', 0};   % col 3 = collapsible examples panel
 root.Padding       = [0 0 0 0];
 root.RowSpacing    = 0;
 root.ColumnSpacing = 0;
 
-% --- toolbar (spans both columns) ---
+% --- toolbar (spans all columns) ---
 tbPanel = uipanel(root);
-tbPanel.Layout.Row = 1; tbPanel.Layout.Column = [1 2];
-tb = uigridlayout(tbPanel, [1 11]);
-tb.ColumnWidth = {60, 60, 130, '1x', 110, 110, 140, 120, 130, 90, 70};
+tbPanel.Layout.Row = 1; tbPanel.Layout.Column = [1 3];
+tb = uigridlayout(tbPanel, [1 12]);
+tb.ColumnWidth = {60, 60, 130, '1x', 110, 110, 140, 120, 130, 90, 85, 70};
 tb.Padding = [8 4 8 4]; tb.ColumnSpacing = 8;
 
 prevBtn = uibutton(tb, "Text", "◀ Prev", "ButtonPushedFcn", @(~,~) step(-1));
@@ -67,6 +71,8 @@ allenCB = uicheckbox(tb, "Text", "Show Allen types", "Value", false, ...
     "ValueChangedFcn", @(~,~) refreshCurrent());
 layerCB = uicheckbox(tb, "Text", "Show layer", "Value", false, ...
     "ValueChangedFcn", @(~,~) onLayerToggle());
+exBtn = uibutton(tb, "state", "Text", "Examples", "Value", false, ...
+    "ValueChangedFcn", @(s,~) toggleExamples(s.Value)); %#ok<NASGU>
 uibutton(tb, "Text", "Rescan", "ButtonPushedFcn", @(~,~) rescan());
 
 % --- sidebar ---
@@ -121,6 +127,14 @@ savedLbl.Layout.Row = 2; savedLbl.Layout.Column = [1 6];
 
 % KeyPressFcn (not WindowKeyPressFcn): fires only when the figure itself has
 % keyboard focus, so hotkeys stay dead while typing in the Type/Notes boxes.
+% --- collapsible type-examples panel (right column) ---
+exPanel = uipanel(root, "Title", "Type examples", "Visible", "off");
+exPanel.Layout.Row = 2; exPanel.Layout.Column = 3;
+exGrid = uigridlayout(exPanel, [1 1]);
+exGrid.Scrollable = "on";
+exGrid.ColumnWidth = {'1x'};
+exGrid.Padding = [4 4 4 4]; exGrid.RowSpacing = 6;
+
 fig.KeyPressFcn = @(~,evt) onKey(evt);
 
 refreshLabelControls();
@@ -480,6 +494,7 @@ app.fig = fig;
     function commitLabel(lbl)
         if isempty(filtRows), return; end
         row = filtRows(curPos);
+        prev = getLabel(row);
         k = string(meta.("specimen__id")(row));
         e = struct("label", lbl, "notes", string(notesEF.Value), ...
             "timestamp", string(datetime("now", "Format", "yyyy-MM-dd HH:mm:ss")));
@@ -491,6 +506,7 @@ app.fig = fig;
         saveLabels();
         refreshLabelControls();   % active set may have changed either way
         refreshTypeFilter();
+        syncExamplePanel(prev, lbl);
         if statusDD.Value ~= "All cells" || string(typeDD.Value) ~= "All my types"
             applyFilters(true);   % membership in the filtered list may have changed
         else
@@ -594,6 +610,158 @@ app.fig = fig;
         else
             parts = arrayfun(@(i) sprintf("%d: %s", i, ap(i)), (1:nHot)');
             hotkeyLbl.Text = strjoin(parts, "   ");
+        end
+    end
+
+% =====================================================================
+%                       type-examples panel
+% =====================================================================
+    function toggleExamples(on)
+        examplesOn = on;
+        if on
+            root.ColumnWidth{3} = 340;
+            exPanel.Visible = "on";
+            rebuildExamplePanel();
+        else
+            root.ColumnWidth{3} = 0;
+            exPanel.Visible = "off";
+        end
+    end
+
+    function ids = typeExampleIds(name)
+        % labeled cells of this type with data on disk, newest label first
+        ids = strings(0, 1); ts = strings(0, 1);
+        ks = labels.keys;
+        for i = 1:numel(ks)
+            e = labels{ks(i)};
+            if e.label == name && rowOfId.isKey(ks(i)) && hasFile(rowOfId(ks(i)))
+                ids(end+1, 1) = ks(i); ts(end+1, 1) = e.timestamp; %#ok<AGROW>
+            end
+        end
+        [~, o] = sort(ts, "descend");
+        ids = ids(o);
+    end
+
+    function rebuildExamplePanel()
+        if ~examplesOn, return; end
+        delete(exGrid.Children);
+        ap = activePresets();
+        exState = struct('name',{},'idx',{},'ax',{},'head',{},'pos',{});
+        if isempty(ap)
+            exGrid.RowHeight = {'fit'};
+            uilabel(exGrid, "Text", "No labeled types yet.", ...
+                "HorizontalAlignment", "center");
+            return
+        end
+        exGrid.RowHeight = repmat({230}, 1, numel(ap));
+        for k = 1:numel(ap)
+            p = uipanel(exGrid);
+            g = uigridlayout(p, [3 1]);
+            g.RowHeight = {'fit', '1x', 'fit'};
+            g.Padding = [4 2 4 4]; g.RowSpacing = 2;
+            hg = uigridlayout(g, [1 4]);
+            hg.ColumnWidth = {'1x', 24, 44, 24};
+            hg.Padding = [0 0 0 0]; hg.ColumnSpacing = 2;
+            head = uilabel(hg, "Text", "", "FontWeight", "bold");
+            uibutton(hg, "Text", "◀", "ButtonPushedFcn", @(~,~) cycleExample(k, -1));
+            posLbl = uilabel(hg, "Text", "", "HorizontalAlignment", "center", ...
+                "FontSize", 11);
+            uibutton(hg, "Text", "▶", "ButtonPushedFcn", @(~,~) cycleExample(k, +1));
+            ax = uiaxes(g);
+            ax.XTick = []; ax.YTick = [];
+            disableDefaultInteractivity(ax);
+            ax.Toolbar.Visible = "off";
+            uibutton(g, "Text", "Assign to this type", ...
+                "ButtonPushedFcn", @(~,~) commitLabel(ap(k)));
+            exState(k) = struct('name', ap(k), 'idx', 1, 'ax', ax, ...
+                'head', head, 'pos', posLbl);
+            updateExample(k);
+        end
+    end
+
+    function cycleExample(k, d)
+        ids = typeExampleIds(exState(k).name);
+        if isempty(ids), return; end
+        exState(k).idx = mod(exState(k).idx - 1 + d, numel(ids)) + 1;
+        updateExample(k);
+    end
+
+    function updateExample(k)
+        st = exState(k);
+        ids = typeExampleIds(st.name);
+        hk = find(activePresets() == st.name, 1);
+        hkStr = "";
+        if ~isempty(hk) && hk <= 9, hkStr = sprintf(" [%d]", hk); end
+        st.head.Text = sprintf("%s%s · %d cells", st.name, hkStr, numel(ids));
+        if isempty(ids)
+            cla(st.ax); st.pos.Text = "0/0";
+            return
+        end
+        exState(k).idx = min(exState(k).idx, numel(ids));
+        id = ids(exState(k).idx);
+        st.pos.Text = sprintf("%d/%d", exState(k).idx, numel(ids));
+        d = exampleData(id);
+        cla(st.ax);
+        set(st.ax, "NextPlot", "add");
+        cols = [0.25 0.45 0.85; 0.55 0.60 0.30; 0.85 0.25 0.15];
+        for j = 1:numel(d.y)
+            plot(st.ax, d.t{j}, d.y{j}, "Color", cols(min(j, 3), :), ...
+                "LineWidth", 0.5);
+        end
+        st.ax.XLim = [0, max(cellfun(@(t) t(end), d.t))];
+        title(st.ax, string(id), "FontSize", 9, "FontWeight", "normal", ...
+            "Interpreter", "none");
+    end
+
+    function d = exampleData(id)
+        % hyperpolarizing / near-rheobase / max sweeps, min-max decimated
+        % for fast plotting with spike peaks preserved; cached per cell
+        if exCache.isKey(id), d = exCache{id}; return; end
+        f = fullfile(cellsDir, id + ".h5");
+        resp = h5read(f, "/response");
+        if size(resp, 1) < size(resp, 2), resp = resp'; end
+        cur = h5read(f, "/current_pa");
+        fs = h5readatt(f, "/", "fs_hz");
+        [~, o] = sort(cur); resp = resp(:, o); cur = cur(o);
+        picks = unique([1, find(cur > 0, 1), numel(cur)]);
+        d.t = {}; d.y = {};
+        for j = picks(:)'
+            y = resp(:, j); y = y(~isnan(y));
+            [yb, tb] = minmaxDecim(y, 1500, fs);
+            d.t{end+1} = tb; d.y{end+1} = yb; %#ok<AGROW>
+        end
+        exCache(id) = {d};
+    end
+
+    function [y2, t2] = minmaxDecim(y, nb, fs)
+        n = numel(y);
+        if n <= 2*nb
+            y2 = y; t2 = (0:n-1)' / fs;
+            return
+        end
+        edges = round(linspace(1, n+1, nb+1));
+        y2 = zeros(2*nb, 1); t2 = zeros(2*nb, 1);
+        for b = 1:nb
+            seg = y(edges(b):edges(b+1)-1);
+            y2(2*b-1) = min(seg); y2(2*b) = max(seg);
+            tc = (edges(b) - 1) / fs;
+            t2(2*b-1) = tc;
+            t2(2*b) = tc + (edges(b+1) - edges(b)) / (2*fs);
+        end
+    end
+
+    function syncExamplePanel(oldL, newL)
+        if ~examplesOn, return; end
+        ap = activePresets();
+        if numel(ap) ~= numel(exState) || ...
+                ~isequal(sort(ap(:)), sort(reshape([exState.name], [], 1)))
+            rebuildExamplePanel();
+            return
+        end
+        for k = 1:numel(exState)
+            if exState(k).name == oldL || exState(k).name == newL
+                updateExample(k);
+            end
         end
     end
 
