@@ -111,7 +111,9 @@ savedLbl = uilabel(lp, "Text", "labels.csv: " + string(nnz_labels()) + " cells",
     "FontSize", 11, "FontColor", [.4 .4 .4]);
 savedLbl.Layout.Row = 2; savedLbl.Layout.Column = [1 5];
 
-fig.WindowKeyPressFcn = @(~,evt) onKey(evt);
+% KeyPressFcn (not WindowKeyPressFcn): fires only when the figure itself has
+% keyboard focus, so hotkeys stay dead while typing in the Type/Notes boxes.
+fig.KeyPressFcn = @(~,evt) onKey(evt);
 
 refreshLabelControls();
 refreshTypeFilter();
@@ -354,6 +356,7 @@ app.fig = fig;
         notesEF.Value = char(getNotes(row));
         plotCell(row);
         updateProgress();
+        try, focus(fig); catch, end % re-arm hotkeys after any navigation %#ok<TRYNC>
     end
 
     function updateProgress()
@@ -510,6 +513,7 @@ app.fig = fig;
         e.timestamp = string(datetime("now", "Format", "yyyy-MM-dd HH:mm:ss"));
         labels(k) = {e};
         saveLabels();
+        try, focus(fig); catch, end %#ok<TRYNC>
     end
 
     function refreshLabelControls()
