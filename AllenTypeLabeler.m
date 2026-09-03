@@ -481,9 +481,9 @@ app.fig = fig;
         if lbl ~= "" && ~any(presets == lbl)
             presets(end+1, 1) = lbl;
             savePresets();
-            refreshLabelControls();
         end
         saveLabels();
+        refreshLabelControls();   % active set may have changed either way
         refreshTypeFilter();
         if statusDD.Value ~= "All cells" || string(typeDD.Value) ~= "All my types"
             applyFilters(true);   % membership in the filtered list may have changed
@@ -498,14 +498,25 @@ app.fig = fig;
         end
     end
 
-    function refreshTypeFilter()
-        inUse = strings(0, 1);
+    function u = labelsInUse()
+        % unique labels currently assigned to >=1 cell
+        u = strings(0, 1);
         ids = labels.keys;
         for i = 1:numel(ids)
             L = labels{ids(i)}.label;
-            if L ~= "", inUse(end+1, 1) = L; end %#ok<AGROW>
+            if L ~= "", u(end+1, 1) = L; end %#ok<AGROW>
         end
-        items = ["All my types"; sort(unique(inUse))];
+        u = unique(u, "stable");
+    end
+
+    function p = activePresets()
+        % presets restricted to labels in use (presets file only remembers
+        % hotkey order; a typo drops out once its last cell is relabeled)
+        p = presets(ismember(presets, labelsInUse()));
+    end
+
+    function refreshTypeFilter()
+        items = ["All my types"; sort(labelsInUse())];
         prev = string(typeDD.Value);
         typeDD.Items = items;
         if any(items == prev), typeDD.Value = prev;
@@ -528,12 +539,13 @@ app.fig = fig;
     end
 
     function refreshLabelControls()
-        labelDD.Items = cellstr(["" ; presets]);
-        nHot = min(9, numel(presets));
+        ap = activePresets();
+        labelDD.Items = cellstr(["" ; ap]);
+        nHot = min(9, numel(ap));
         if nHot == 0
             hotkeyLbl.Text = "Type a label + Enter to create it; it gains the next hotkey (1-9).";
         else
-            parts = arrayfun(@(i) sprintf("%d: %s", i, presets(i)), (1:nHot)');
+            parts = arrayfun(@(i) sprintf("%d: %s", i, ap(i)), (1:nHot)');
             hotkeyLbl.Text = strjoin(parts, "   ");
         end
     end
@@ -552,8 +564,9 @@ app.fig = fig;
                 if isempty(d)
                     d = sscanf(strrep(evt.Key, 'numpad', ''), '%d');
                 end
-                if ~isempty(d) && d >= 1 && d <= min(9, numel(presets))
-                    commitLabel(presets(d));
+                ap = activePresets();
+                if ~isempty(d) && d >= 1 && d <= min(9, numel(ap))
+                    commitLabel(ap(d));
                 end
         end
     end
