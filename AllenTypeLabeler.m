@@ -35,11 +35,13 @@ filtRows = (1:nCells)';      % meta rows passing filters, list order
 curPos   = 1;                % position within filtRows
 rowOfId  = dictionary(string(meta.("specimen__id")), (1:nCells)');
 examplesOn = false;          % right-hand type-examples panel expanded?
-exState  = struct('name',{},'idx',{},'ax',{},'head',{},'pos',{});
+exState  = struct('name',{},'shownId',{},'plotted',{},'ax',{},'head',{},'pos',{});
 exCache  = dictionary(string.empty, cell.empty);  % id -> decimated example traces
 exWidth  = 340;              % examples column width (px), user-resizable
 exDragging = false;          % splitter drag in progress
 gripHover  = false;
+exDirty  = false;            % labels changed while the panel was closed
+labCache = [];               % memoized (ids,labs,ts) of labeled cells; [] = stale
 
 % ---------------- UI ----------------
 fig = uifigure("Name", "Allen Cell Types Labeler — WASSUP", ...
@@ -225,11 +227,7 @@ app.fig = fig;
     end
 
     function n = nnz_labels()
-        n = 0;
-        ids = labels.keys;
-        for i = 1:numel(ids)
-            if labels{ids(i)}.label ~= "", n = n + 1; end
-        end
+        n = numel(labelArrays().ids);
     end
 
     function d = loadAllenTypes()
@@ -508,6 +506,7 @@ app.fig = fig;
         e = struct("label", lbl, "notes", string(notesEF.Value), ...
             "timestamp", string(datetime("now", "Format", "yyyy-MM-dd HH:mm:ss")));
         labels(k) = {e};
+        labCache = [];
         if lbl ~= "" && ~any(presets == lbl)
             presets(end+1, 1) = lbl;
             savePresets();
@@ -529,15 +528,26 @@ app.fig = fig;
         end
     end
 
+    function c = labelArrays()
+        % one scan of the labels dictionary, memoized until labels change
+        if isempty(labCache)
+            ks = labels.keys;
+            n = numel(ks);
+            labs = strings(n, 1); ts = strings(n, 1);
+            for i = 1:n
+                e = labels{ks(i)};
+                labs(i) = e.label; ts(i) = e.timestamp;
+            end
+            keep = labs ~= "";
+            labCache = struct('ids', ks(keep), 'labs', labs(keep), ...
+                'ts', ts(keep));
+        end
+        c = labCache;
+    end
+
     function u = labelsInUse()
         % unique labels currently assigned to >=1 cell
-        u = strings(0, 1);
-        ids = labels.keys;
-        for i = 1:numel(ids)
-            L = labels{ids(i)}.label;
-            if L ~= "", u(end+1, 1) = L; end %#ok<AGROW>
-        end
-        u = unique(u, "stable");
+        u = unique(labelArrays().labs, "stable");
     end
 
     function p = activePresets()
@@ -565,6 +575,7 @@ app.fig = fig;
         e.notes = txt;
         e.timestamp = string(datetime("now", "Format", "yyyy-MM-dd HH:mm:ss"));
         labels(k) = {e};
+        labCache = [];
         saveLabels();
         try, focus(fig); catch, end %#ok<TRYNC>
     end
@@ -632,7 +643,12 @@ app.fig = fig;
             root.ColumnWidth{4} = exWidth;
             grip.Visible = "on";
             exPanel.Visible = "on";
-            rebuildExamplePanel();
+            n0 = numel(exState);
+            rebuilt = ensureExampleCards();
+            if exDirty && ~rebuilt
+                for k = 1:min(n0, numel(exState)), updateExample(k); end
+            end
+            exDirty = false;
         else
             root.ColumnWidth{3} = 0;
             root.ColumnWidth{4} = 0;
@@ -674,63 +690,99 @@ app.fig = fig;
 
     function ids = typeExampleIds(name)
         % labeled cells of this type with data on disk, newest label first
-        ids = strings(0, 1); ts = strings(0, 1);
-        ks = labels.keys;
-        for i = 1:numel(ks)
-            e = labels{ks(i)};
-            if e.label == name && rowOfId.isKey(ks(i)) && hasFile(rowOfId(ks(i)))
-                ids(end+1, 1) = ks(i); ts(end+1, 1) = e.timestamp; %#ok<AGROW>
-            end
+        c = labelArrays();
+        m = c.labs == name;
+        ids = c.ids(m); ts = c.ts(m);
+        known = rowOfId.isKey(ids);
+        ids = ids(known); ts = ts(known);
+        if ~isempty(ids)
+            ok = hasFile(rowOfId(ids));
+            ids = ids(ok); ts = ts(ok);
         end
         [~, o] = sort(ts, "descend");
         ids = ids(o);
+    end
+
+    function rebuilt = ensureExampleCards()
+        % append cards for newly created types; full rebuild only when
+        % types were removed/reordered or nothing is built yet
+        rebuilt = false;
+        ap = activePresets();
+        n0 = numel(exState);
+        names0 = reshape([exState.name], [], 1);
+        if n0 == 0 || n0 > numel(ap) || ~isequal(names0, ap(1:n0))
+            rebuildExamplePanel();
+            rebuilt = true;
+            return
+        end
+        if numel(ap) > n0
+            exGrid.RowHeight = repmat({230}, 1, numel(ap));
+            for k = n0+1:numel(ap)
+                addExampleCard(k, ap(k));
+            end
+        end
     end
 
     function rebuildExamplePanel()
         if ~examplesOn, return; end
         delete(exGrid.Children);
         ap = activePresets();
-        exState = struct('name',{},'idx',{},'ax',{},'head',{},'pos',{});
+        exState = struct('name',{},'shownId',{},'plotted',{},'ax',{},'head',{},'pos',{});
         if isempty(ap)
             exGrid.RowHeight = {'fit'};
             uilabel(exGrid, "Text", "No labeled types yet.", ...
                 "HorizontalAlignment", "center");
             return
         end
+        dlg = [];
+        if numel(ap) > 10
+            dlg = uiprogressdlg(fig, "Message", "Building example cards…", ...
+                "Indeterminate", "on");
+        end
         exGrid.RowHeight = repmat({230}, 1, numel(ap));
         for k = 1:numel(ap)
-            p = uipanel(exGrid);
-            g = uigridlayout(p, [3 1]);
-            g.RowHeight = {'fit', '1x', 'fit'};
-            g.Padding = [4 2 4 4]; g.RowSpacing = 2;
-            hg = uigridlayout(g, [1 4]);
-            hg.ColumnWidth = {'1x', 24, 44, 24};
-            hg.Padding = [0 0 0 0]; hg.ColumnSpacing = 2;
-            head = uilabel(hg, "Text", "", "FontWeight", "bold");
-            uibutton(hg, "Text", "◀", "ButtonPushedFcn", @(~,~) cycleExample(k, -1));
-            posLbl = uilabel(hg, "Text", "", "HorizontalAlignment", "center", ...
-                "FontSize", 11);
-            uibutton(hg, "Text", "▶", "ButtonPushedFcn", @(~,~) cycleExample(k, +1));
-            ax = uiaxes(g);
-            ax.XTick = []; ax.YTick = [];
-            disableDefaultInteractivity(ax);
-            ax.Toolbar.Visible = "off";
-            uibutton(g, "Text", "Assign to this type", ...
-                "ButtonPushedFcn", @(~,~) commitLabel(ap(k)));
-            exState(k) = struct('name', ap(k), 'idx', 1, 'ax', ax, ...
-                'head', head, 'pos', posLbl);
-            updateExample(k);
+            addExampleCard(k, ap(k));
         end
+        if ~isempty(dlg), close(dlg); end
+    end
+
+    function addExampleCard(k, name)
+        p = uipanel(exGrid);
+        p.Layout.Row = k; p.Layout.Column = 1;
+        g = uigridlayout(p, [3 1]);
+        g.RowHeight = {'fit', '1x', 'fit'};
+        g.Padding = [4 2 4 4]; g.RowSpacing = 2;
+        hg = uigridlayout(g, [1 4]);
+        hg.ColumnWidth = {'1x', 24, 44, 24};
+        hg.Padding = [0 0 0 0]; hg.ColumnSpacing = 2;
+        head = uilabel(hg, "Text", "", "FontWeight", "bold");
+        uibutton(hg, "Text", "◀", "ButtonPushedFcn", @(~,~) cycleExample(k, -1));
+        posLbl = uilabel(hg, "Text", "", "HorizontalAlignment", "center", ...
+            "FontSize", 11);
+        uibutton(hg, "Text", "▶", "ButtonPushedFcn", @(~,~) cycleExample(k, +1));
+        ax = uiaxes(g);
+        ax.XTick = []; ax.YTick = [];
+        disableDefaultInteractivity(ax);
+        ax.Toolbar.Visible = "off";
+        uibutton(g, "Text", "Assign to this type", ...
+            "ButtonPushedFcn", @(~,~) commitLabel(name));
+        exState(k) = struct('name', name, 'shownId', "", 'plotted', "", ...
+            'ax', ax, 'head', head, 'pos', posLbl);
+        updateExample(k);
     end
 
     function cycleExample(k, d)
         ids = typeExampleIds(exState(k).name);
         if isempty(ids), return; end
-        exState(k).idx = mod(exState(k).idx - 1 + d, numel(ids)) + 1;
+        cur = find(ids == exState(k).shownId, 1);
+        if isempty(cur), cur = 0; end
+        exState(k).shownId = ids(mod(cur - 1 + d, numel(ids)) + 1);
         updateExample(k);
     end
 
     function updateExample(k)
+        % refreshes header/count always; replots only when the shown cell
+        % changes, so label commits stay cheap (no h5 read, no flicker)
         st = exState(k);
         ids = typeExampleIds(st.name);
         hk = find(activePresets() == st.name, 1);
@@ -739,71 +791,77 @@ app.fig = fig;
         st.head.Text = sprintf("%s%s · %d cells", st.name, hkStr, numel(ids));
         if isempty(ids)
             cla(st.ax); st.pos.Text = "0/0";
+            exState(k).shownId = ""; exState(k).plotted = "";
             return
         end
-        exState(k).idx = min(exState(k).idx, numel(ids));
-        id = ids(exState(k).idx);
-        st.pos.Text = sprintf("%d/%d", exState(k).idx, numel(ids));
+        if exState(k).shownId == "" || ~any(ids == exState(k).shownId)
+            exState(k).shownId = ids(1);
+        end
+        id = exState(k).shownId;
+        st.pos.Text = sprintf("%d/%d", find(ids == id, 1), numel(ids));
+        if exState(k).plotted == id
+            return
+        end
         d = exampleData(id);
         cla(st.ax);
-        set(st.ax, "NextPlot", "add");
-        cols = [0.25 0.45 0.85; 0.55 0.60 0.30; 0.85 0.25 0.15];
-        for j = 1:numel(d.y)
-            plot(st.ax, d.t{j}, d.y{j}, "Color", cols(min(j, 3), :), ...
-                "LineWidth", 0.5);
-        end
-        st.ax.XLim = [0, max(cellfun(@(t) t(end), d.t))];
+        set(st.ax, "ColorOrder", turbo(max(size(d.Y, 2), 2)), ...
+            "NextPlot", "replacechildren");   % same current-coloring as main
+        plot(st.ax, d.T, d.Y, "LineWidth", 0.5);
+        st.ax.XLim = [0, max(d.T(:), [], "omitnan")];
         title(st.ax, string(id), "FontSize", 9, "FontWeight", "normal", ...
             "Interpreter", "none");
+        exState(k).plotted = id;
     end
 
     function d = exampleData(id)
-        % hyperpolarizing / near-rheobase / max sweeps, min-max decimated
-        % for fast plotting with spike peaks preserved; cached per cell
+        % ALL long-square sweeps, sorted by current, min-max decimated per
+        % sweep (spike peaks preserved) so cards plot fast; cached per cell
         if exCache.isKey(id), d = exCache{id}; return; end
         f = fullfile(cellsDir, id + ".h5");
         resp = h5read(f, "/response");
         if size(resp, 1) < size(resp, 2), resp = resp'; end
         cur = h5read(f, "/current_pa");
         fs = h5readatt(f, "/", "fs_hz");
-        [~, o] = sort(cur); resp = resp(:, o); cur = cur(o);
-        picks = unique([1, find(cur > 0, 1), numel(cur)]);
-        d.t = {}; d.y = {};
-        for j = picks(:)'
+        [~, o] = sort(cur); resp = resp(:, o);
+        nsw = size(resp, 2);
+        ts = cell(1, nsw); ys = cell(1, nsw);
+        for j = 1:nsw
             y = resp(:, j); y = y(~isnan(y));
-            [yb, tb] = minmaxDecim(y, 1500, fs);
-            d.t{end+1} = tb; d.y{end+1} = yb; %#ok<AGROW>
+            [ys{j}, ts{j}] = minmaxDecim(y, 500, fs);
+        end
+        nb = max(cellfun(@numel, ys));
+        d.T = nan(nb, nsw, "single"); d.Y = nan(nb, nsw, "single");
+        for j = 1:nsw
+            d.T(1:numel(ts{j}), j) = ts{j};
+            d.Y(1:numel(ys{j}), j) = ys{j};
+        end
+        if exCache.numEntries > 100   % keep memory bounded
+            exCache = dictionary(string.empty, cell.empty);
         end
         exCache(id) = {d};
     end
 
     function [y2, t2] = minmaxDecim(y, nb, fs)
+        % per-bin [min max] envelope: preserves spike peaks at ~2*nb points
         n = numel(y);
         if n <= 2*nb
-            y2 = y; t2 = (0:n-1)' / fs;
+            y2 = y(:); t2 = (0:n-1)' / fs;
             return
         end
-        edges = round(linspace(1, n+1, nb+1));
-        y2 = zeros(2*nb, 1); t2 = zeros(2*nb, 1);
-        for b = 1:nb
-            seg = y(edges(b):edges(b+1)-1);
-            y2(2*b-1) = min(seg); y2(2*b) = max(seg);
-            tc = (edges(b) - 1) / fs;
-            t2(2*b-1) = tc;
-            t2(2*b) = tc + (edges(b+1) - edges(b)) / (2*fs);
-        end
+        L = floor(n / nb);
+        Y = reshape(y(1:L*nb), L, nb);
+        y2 = reshape([min(Y, [], 1); max(Y, [], 1)], [], 1);
+        tc = ((0:nb-1) * L)' / fs;
+        t2 = reshape([tc, tc + L/(2*fs)]', [], 1);
     end
 
     function syncExamplePanel(oldL, newL)
-        if ~examplesOn, return; end
-        ap = activePresets();
-        if numel(ap) ~= numel(exState) || ...
-                ~isequal(sort(ap(:)), sort(reshape([exState.name], [], 1)))
-            rebuildExamplePanel();
-            return
-        end
+        if ~examplesOn, exDirty = true; return; end
+        n0 = numel(exState);
+        rebuilt = ensureExampleCards();
+        if rebuilt, return; end
         for k = 1:numel(exState)
-            if exState(k).name == oldL || exState(k).name == newL
+            if exState(k).name == oldL || (exState(k).name == newL && k <= n0)
                 updateExample(k);
             end
         end
