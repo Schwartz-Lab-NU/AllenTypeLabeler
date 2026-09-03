@@ -40,7 +40,8 @@ AllenTypeLabeler            % or AllenTypeLabeler(rootDir)
 | → / ← | next / previous cell |
 | 1–9 | assign preset label (and auto-advance) |
 | 0 | clear label |
-| u | jump to next unlabeled cell |
+
+The "Next unlabeled" toolbar button jumps to the next cell without a label.
 
 Type any new label in the Type box + Enter — it is saved, added to
 `label_presets.txt`, and gains the next free hotkey. The Mouse/Human switch

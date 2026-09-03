@@ -12,7 +12,7 @@ function app = AllenTypeLabeler(rootDir)
 %   <root>/label_presets.txt   one label per line; first 9 get hotkeys 1-9
 %
 % Keys:  right/left  next/prev cell        1-9  assign preset label
-%        u           next unlabeled        0    clear label
+%        0           clear label           (Next unlabeled: toolbar button)
 % Cells still downloading show as "..." and display a placeholder; press
 % Rescan to pick up newly finished files without restarting.
 
@@ -53,7 +53,7 @@ tb.Padding = [8 4 8 4]; tb.ColumnSpacing = 8;
 
 prevBtn = uibutton(tb, "Text", "◀ Prev", "ButtonPushedFcn", @(~,~) step(-1));
 nextBtn = uibutton(tb, "Text", "Next ▶", "ButtonPushedFcn", @(~,~) step(+1)); %#ok<NASGU>
-nextUnBtn = uibutton(tb, "Text", "Next unlabeled (u)", ...
+nextUnBtn = uibutton(tb, "Text", "Next unlabeled", ...
     "ButtonPushedFcn", @(~,~) gotoNextUnlabeled()); %#ok<NASGU>
 progLbl = uilabel(tb, "Text", "", "HorizontalAlignment", "center");
 speciesSW = uiswitch(tb, "slider", "Items", ["Mouse", "Human"], ...
@@ -557,7 +557,6 @@ app.fig = fig;
         switch evt.Key
             case {'rightarrow', 'downarrow'}, step(+1);
             case {'leftarrow', 'uparrow'},    step(-1);
-            case 'u',                         gotoNextUnlabeled();
             case {'0', 'numpad0'},            commitLabel("");
             otherwise
                 d = sscanf(evt.Key, '%d');
