@@ -37,20 +37,23 @@ rowOfId  = dictionary(string(meta.("specimen__id")), (1:nCells)');
 examplesOn = false;          % right-hand type-examples panel expanded?
 exState  = struct('name',{},'idx',{},'ax',{},'head',{},'pos',{});
 exCache  = dictionary(string.empty, cell.empty);  % id -> decimated example traces
+exWidth  = 340;              % examples column width (px), user-resizable
+exDragging = false;          % splitter drag in progress
+gripHover  = false;
 
 % ---------------- UI ----------------
 fig = uifigure("Name", "Allen Cell Types Labeler — WASSUP", ...
     "Position", [60 60 1400 850]);
-root = uigridlayout(fig, [2 3]);
+root = uigridlayout(fig, [2 4]);
 root.RowHeight     = {38, '1x'};
-root.ColumnWidth   = {300, '1x', 0};   % col 3 = collapsible examples panel
+root.ColumnWidth   = {300, '1x', 0, 0};   % col 3 = splitter grip, col 4 = examples
 root.Padding       = [0 0 0 0];
 root.RowSpacing    = 0;
 root.ColumnSpacing = 0;
 
 % --- toolbar (spans all columns) ---
 tbPanel = uipanel(root);
-tbPanel.Layout.Row = 1; tbPanel.Layout.Column = [1 3];
+tbPanel.Layout.Row = 1; tbPanel.Layout.Column = [1 4];
 tb = uigridlayout(tbPanel, [1 12]);
 tb.ColumnWidth = {60, 60, 130, '1x', 110, 110, 140, 120, 130, 90, 85, 70};
 tb.Padding = [8 4 8 4]; tb.ColumnSpacing = 8;
@@ -127,15 +130,21 @@ savedLbl.Layout.Row = 2; savedLbl.Layout.Column = [1 6];
 
 % KeyPressFcn (not WindowKeyPressFcn): fires only when the figure itself has
 % keyboard focus, so hotkeys stay dead while typing in the Type/Notes boxes.
-% --- collapsible type-examples panel (right column) ---
+% --- collapsible type-examples panel (right column) + drag splitter ---
+grip = uipanel(root, "Visible", "off", "BorderType", "none", ...
+    "BackgroundColor", [0.5 0.5 0.5]);
+grip.Layout.Row = 2; grip.Layout.Column = 3;
 exPanel = uipanel(root, "Title", "Type examples", "Visible", "off");
-exPanel.Layout.Row = 2; exPanel.Layout.Column = 3;
+exPanel.Layout.Row = 2; exPanel.Layout.Column = 4;
 exGrid = uigridlayout(exPanel, [1 1]);
 exGrid.Scrollable = "on";
 exGrid.ColumnWidth = {'1x'};
 exGrid.Padding = [4 4 4 4]; exGrid.RowSpacing = 6;
 
 fig.KeyPressFcn = @(~,evt) onKey(evt);
+fig.WindowButtonDownFcn   = @(~,~) onMouseDown();
+fig.WindowButtonMotionFcn = @(~,~) onMouseMove();
+fig.WindowButtonUpFcn     = @(~,~) exDragEnd();
 
 refreshLabelControls();
 refreshTypeFilter();
@@ -619,13 +628,48 @@ app.fig = fig;
     function toggleExamples(on)
         examplesOn = on;
         if on
-            root.ColumnWidth{3} = 340;
+            root.ColumnWidth{3} = 6;
+            root.ColumnWidth{4} = exWidth;
+            grip.Visible = "on";
             exPanel.Visible = "on";
             rebuildExamplePanel();
         else
             root.ColumnWidth{3} = 0;
+            root.ColumnWidth{4} = 0;
+            grip.Visible = "off";
             exPanel.Visible = "off";
         end
+    end
+
+    function tf = overGrip()
+        cp = fig.CurrentPoint;
+        gripLeft = fig.Position(3) - exWidth - 6;
+        tf = examplesOn && cp(1) >= gripLeft - 3 && cp(1) <= gripLeft + 9 ...
+            && cp(2) <= fig.Position(4) - 38;
+    end
+
+    function onMouseDown()
+        if isequal(fig.CurrentObject, grip) || overGrip()
+            exDragging = true;
+        end
+    end
+
+    function onMouseMove()
+        if exDragging
+            w = fig.Position(3) - fig.CurrentPoint(1) - 3;
+            exWidth = max(220, min(w, fig.Position(3) - 720));
+            root.ColumnWidth{4} = exWidth;
+        else
+            hov = overGrip();
+            if hov ~= gripHover
+                gripHover = hov;
+                if hov, fig.Pointer = "left"; else, fig.Pointer = "arrow"; end
+            end
+        end
+    end
+
+    function exDragEnd()
+        exDragging = false;
     end
 
     function ids = typeExampleIds(name)
