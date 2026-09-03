@@ -47,8 +47,8 @@ root.ColumnSpacing = 0;
 % --- toolbar (spans both columns) ---
 tbPanel = uipanel(root);
 tbPanel.Layout.Row = 1; tbPanel.Layout.Column = [1 2];
-tb = uigridlayout(tbPanel, [1 10]);
-tb.ColumnWidth = {60, 60, 130, '1x', 110, 110, 140, 120, 130, 70};
+tb = uigridlayout(tbPanel, [1 11]);
+tb.ColumnWidth = {60, 60, 130, '1x', 110, 110, 140, 120, 130, 90, 70};
 tb.Padding = [8 4 8 4]; tb.ColumnSpacing = 8;
 
 prevBtn = uibutton(tb, "Text", "◀ Prev", "ButtonPushedFcn", @(~,~) step(-1));
@@ -65,6 +65,8 @@ typeDD = uidropdown(tb, "Items", "All my types", ...
 autoAdvCB = uicheckbox(tb, "Text", "Auto-advance", "Value", true);
 allenCB = uicheckbox(tb, "Text", "Show Allen types", "Value", false, ...
     "ValueChangedFcn", @(~,~) refreshCurrent());
+layerCB = uicheckbox(tb, "Text", "Show layer", "Value", false, ...
+    "ValueChangedFcn", @(~,~) onLayerToggle());
 uibutton(tb, "Text", "Rescan", "ButtonPushedFcn", @(~,~) rescan());
 
 % --- sidebar ---
@@ -144,8 +146,10 @@ app.fig = fig;
         T = readtable(f, opts);
         [~, iu] = unique(T.("specimen__id"), "stable");
         T = T(iu, :);
+        % deliberately NOT sorted by layer: layer-adjacent grouping in the
+        % list would leak layer identity even when the layer text is hidden
         T = sortrows(T, ["donor__species","structure_parent__acronym", ...
-            "structure__layer","specimen__id"]);
+            "specimen__id"]);
     end
 
     function d = loadLabels()
@@ -278,41 +282,45 @@ app.fig = fig;
         selectByPos(p);
     end
 
-    function rebuildListItems()
-        rows = filtRows;
-        ids = string(meta.("specimen__id")(rows));
-        reg = meta.("structure__acronym")(rows);
-        lay = meta.("structure__layer")(rows);
-        items = strings(numel(rows), 1);
-        for i = 1:numel(rows)
-            lab = getLabel(rows(i));
-            if ~hasFile(rows(i)),      mark = "…";
-            elseif lab ~= "",          mark = "✓";
-            else,                      mark = " ";
-            end
-            tag = reg(i);
-            if ~ismissing(lay(i)) && lay(i) ~= "", tag = tag + " L" + lay(i); end
-            items(i) = sprintf("%s %s  %s", mark, ids(i), tag);
-            if lab ~= "", items(i) = items(i) + "  → " + lab; end
+    function s = listItemStr(row)
+        lab = getLabel(row);
+        if ~hasFile(row),   mark = "…";
+        elseif lab ~= "",   mark = "✓";
+        else,               mark = " ";
         end
+        s = sprintf("%s %s  %s", mark, ...
+            string(meta.("specimen__id")(row)), cellTag(row));
+        if lab ~= "", s = s + "  → " + lab; end
+    end
+
+    function rebuildListItems()
+        items = arrayfun(@listItemStr, filtRows);
         cellList.Items = items;
-        cellList.ItemsData = 1:numel(rows);
+        cellList.ItemsData = 1:numel(filtRows);
     end
 
     function refreshListItem(pos)
         items = cellList.Items;
-        rows = filtRows;
-        lab = getLabel(rows(pos));
-        ids = string(meta.("specimen__id")(rows(pos)));
-        reg = meta.("structure__acronym")(rows(pos));
-        lay = meta.("structure__layer")(rows(pos));
-        if ~hasFile(rows(pos)), mark = "…"; elseif lab ~= "", mark = "✓"; else, mark = " "; end
-        tag = reg;
-        if ~ismissing(lay) && lay ~= "", tag = tag + " L" + lay; end
-        s = sprintf("%s %s  %s", mark, ids, tag);
-        if lab ~= "", s = s + "  → " + lab; end
-        items{pos} = char(s);
+        items{pos} = char(listItemStr(filtRows(pos)));
         cellList.Items = items;
+    end
+
+    function tag = cellTag(row)
+        % structure acronym (+ layer). Mouse acronyms embed the layer
+        % ("VISpm2/3", "VISpl6b"), so blinding strips trailing digits too.
+        reg = fmtField(meta.("structure__acronym")(row));
+        if layerCB.Value
+            tag = reg;
+            lay = meta.("structure__layer")(row);
+            if ~ismissing(lay) && lay ~= "", tag = tag + " L" + lay; end
+        else
+            tag = regexprep(reg, "\d.*$", "");
+        end
+    end
+
+    function onLayerToggle()
+        rebuildListItems();
+        selectByPos(curPos);
     end
 
     function onListSelect(src)
@@ -372,19 +380,24 @@ app.fig = fig;
     function showMetadata(row)
         g = @(col) fmtField(meta.(col)(row));
         e = @(col) fmtNum(meta.(col)(row));
+        if layerCB.Value
+            depthStr = e("csl__normalized_depth");   % normalized cortical depth
+        else
+            depthStr = "(hidden)";                   % depth would leak the layer
+        end
         txt = sprintf([ ...
-            '%s\n%s · %s L%s\nline: %s\ndendrite: %s (%s)\nreporter: %s\n', ...
+            '%s\n%s · %s\nline: %s\ndendrite: %s (%s)\nreporter: %s\n', ...
             '─────────────────\n', ...
             'Vrest  %s mV      Ri  %s MΩ\ntau    %s ms      rheo  %s pA\n', ...
             'f-I slope  %s     adapt  %s\nup/down    %s     rate  %s Hz\n', ...
-            'sag depth  %s (norm)'], ...
-            g("specimen__name"), g("donor__species"), g("structure__acronym"), ...
-            g("structure__layer"), g("line_name"), g("tag__dendrite_type"), ...
+            'cort. depth  %s (norm)'], ...
+            g("specimen__name"), g("donor__species"), cellTag(row), ...
+            g("line_name"), g("tag__dendrite_type"), ...
             g("tag__apical"), g("cell_reporter_status"), ...
             e("ef__vrest"), e("ef__ri"), e("ef__tau"), ...
             e("ef__threshold_i_long_square"), e("ef__f_i_curve_slope"), ...
             e("ef__adaptation"), e("ef__upstroke_downstroke_ratio_long_square"), ...
-            e("ef__avg_firing_rate"), e("csl__normalized_depth"));
+            e("ef__avg_firing_rate"), depthStr);
         txt = string(txt) + newline + "─────────────────" + newline;
         if allenCB.Value
             txt = txt + "Allen: " + allenTypeStr(row);
@@ -406,10 +419,8 @@ app.fig = fig;
 
     function plotCell(row)
         id = meta.("specimen__id")(row);
-        ttl = strtrim(sprintf("%d — %s %s L%s  %s", id, ...
-            fmtField(meta.("donor__species")(row)), ...
-            fmtField(meta.("structure__acronym")(row)), ...
-            fmtField(meta.("structure__layer")(row)), ...
+        ttl = strtrim(sprintf("%d — %s %s  %s", id, ...
+            fmtField(meta.("donor__species")(row)), cellTag(row), ...
             fmtField(meta.("line_name")(row))));
         if ~hasFile(row)
             cla(axV); cla(axFI);
