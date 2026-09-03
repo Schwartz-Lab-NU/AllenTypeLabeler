@@ -106,7 +106,8 @@ lp.Padding = [8 6 8 6]; lp.RowSpacing = 4;
 % combobox leaked unconsumed keys to the figure while typing
 uilabel(lp, "Text", "Type:", "HorizontalAlignment", "right");
 labelEF = uieditfield(lp, "text", ...
-    "ValueChangedFcn", @(s,~) commitLabel(strtrim(string(s.Value))));
+    "ValueChangedFcn", @(s,~) commitTyped(strtrim(string(s.Value))), ...
+    "ValueChangingFcn", @(~,evt) onTypeTyping(strtrim(string(evt.Value))));
 labelDD = uidropdown(lp, "Items", {''}, ...
     "ValueChangedFcn", @(s,~) onPresetPick(s));
 uilabel(lp, "Text", "Notes:", "HorizontalAlignment", "right");
@@ -546,6 +547,33 @@ app.fig = fig;
     function onPresetPick(src)
         v = strtrim(string(src.Value));
         if v ~= "", commitLabel(v); end
+    end
+
+    function m = matchPreset(txt)
+        % established type the text resolves to: exact (case-insensitive),
+        % else unique prefix, else unique substring; "" when none/ambiguous
+        m = "";
+        if txt == "", return; end
+        ap = activePresets();
+        ex = ap(strcmpi(ap, txt));
+        if ~isempty(ex), m = ex(1); return; end
+        hit = ap(startsWith(ap, txt, "IgnoreCase", true));
+        if isempty(hit)
+            hit = ap(contains(ap, txt, "IgnoreCase", true));
+        end
+        if numel(hit) == 1, m = hit(1); end
+    end
+
+    function onTypeTyping(txt)
+        % live feedback while typing: dropdown shows what Enter will commit
+        m = matchPreset(txt);
+        if m ~= "", labelDD.Value = char(m); else, labelDD.Value = ''; end
+    end
+
+    function commitTyped(txt)
+        m = matchPreset(txt);
+        if m ~= "", txt = m; end   % complete to the established type
+        commitLabel(txt);
     end
 
     function setLabelControls(lbl)
